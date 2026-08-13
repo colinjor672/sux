@@ -1,0 +1,41 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Visualization"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.2", "GL Compatibility")
+config/icon="res://icon.svg"
+
+[display]
+
+window/size/viewport_width=1280
+window/size/viewport_height=720
+window/disable_vsync=true
+window/fullscreen=false
+window/resizable=false
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
+renderer/vram_compression/import_etc2_astc=true
+quality/driver/driver_name="opengl3"
+quality/vsync/vsync_mode="off"
+quality/frames_per_second/fps_max=0
+quality/textures/default_texture_filter="nearest"
+quality/anti_aliasing/quality="disabled"
+quality/shadows/shadow_atlas_size="2048"
+quality/shadows/shadow_depth_range="ultra"
+quality/effects/bloom_enabled=false
+quality/effects/ssao_enabled=false
+quality/effects/distance_field_shadow_enabled=false

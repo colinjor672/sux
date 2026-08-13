@@ -1,0 +1,89 @@
+[gd_scene load_steps=10 format=3 uid="uid://bcxx17trcpb03"]
+
+[ext_resource type="Script" path="res://scripts/render/video_display.gd" id="1_gtbc2"]
+[ext_resource type="Script" path="res://scripts/render/ship_layer.gd" id="3_5exum"]
+[ext_resource type="Script" path="res://scripts/render/hud.gd" id="4_pwl2f"]
+[ext_resource type="Script" path="res://scripts/render/MaskLayer.gd" id="5_4khae"]
+[ext_resource type="Script" path="res://scripts/render/navigation_band.gd" id="5_ybovl"]
+[ext_resource type="Script" path="res://scripts/network/network_manager.gd" id="6_3qur1"]
+[ext_resource type="Script" path="res://scripts/render/frame_streamer.gd" id="6_e6rqr"]
+[ext_resource type="Script" path="res://scripts/network/tcp_client.gd" id="7_blaf2"]
+[ext_resource type="Script" path="res://scripts/render/shm_video_reader.gd" id="8_shmrd"]
+
+[node name="Node" type="Node"]
+
+[node name="Node2D" type="Node2D" parent="."]
+
+[node name="Camera2D" type="Camera2D" parent="Node2D"]
+editor_draw_screen = false
+
+[node name="CanvasLayer" type="CanvasLayer" parent="Node2D/Camera2D"]
+
+[node name="UIRoot" type="Control" parent="Node2D/Camera2D/CanvasLayer"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VideoDisplay" type="TextureRect" parent="Node2D/Camera2D/CanvasLayer/UIRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 1
+stretch_mode = 6
+script = ExtResource("1_gtbc2")
+
+[node name="ShipLayer" type="Control" parent="Node2D/Camera2D/CanvasLayer/UIRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("3_5exum")
+
+[node name="HUD" type="Control" parent="Node2D/Camera2D/CanvasLayer/UIRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("4_pwl2f")
+
+[node name="NavigationBand" type="Control" parent="Node2D/Camera2D/CanvasLayer/UIRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("5_ybovl")
+
+[node name="MaskLayer" type="Control" parent="Node2D/Camera2D/CanvasLayer/UIRoot"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+expand_mode = 1
+stretch_mode = 6
+script = ExtResource("5_4khae")
+
+[node name="FrameStreamer" type="Node" parent="Node2D"]
+script = ExtResource("6_e6rqr")
+
+[node name="ShmVideoReader" type="Node" parent="."]
+script = ExtResource("8_shmrd")
+
+[node name="NetworkManager" type="Node" parent="."]
+script = ExtResource("6_3qur1")
+
+[node name="NavTCPClient" type="Node" parent="NetworkManager"]
+script = ExtResource("7_blaf2")
