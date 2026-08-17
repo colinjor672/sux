@@ -32,6 +32,7 @@ class AsyncYOLODetector:
         self._input_lock = threading.Lock()
         self._latest_frame: Optional[np.ndarray] = None
         self._latest_frame_id: int = -1
+        self._latest_frame_timestamp: float = 0.0
 
         self._result_lock = threading.Lock()
         self._latest_result: list = []
@@ -77,15 +78,18 @@ class AsyncYOLODetector:
             f"处理={self.frames_processed} 跳过={self.frames_skipped}"
         )
 
-    def submit(self, frame: np.ndarray, frame_id: int):
+    def submit(self, frame: np.ndarray, frame_id: int, timestamp: float = None):
         if frame_id % self.detect_every != 0:
             return
+
+        frame_timestamp = time.time() if timestamp is None else float(timestamp)
 
         with self._input_lock:
             old_id = self._latest_frame_id
             # GStreamer 每帧返回新 buffer，无需 copy
             self._latest_frame = frame
             self._latest_frame_id = frame_id
+            self._latest_frame_timestamp = frame_timestamp
             self.frames_submitted += 1
 
             if old_id != -1 and old_id != frame_id:
@@ -112,6 +116,7 @@ class AsyncYOLODetector:
             with self._input_lock:
                 frame = self._latest_frame
                 frame_id = self._latest_frame_id
+                frame_timestamp = self._latest_frame_timestamp
                 self._latest_frame = None
 
             if frame is None:
@@ -131,7 +136,7 @@ class AsyncYOLODetector:
                         classes=self.allowed_class_ids,
                     )
 
-                ships = self._parse_to_ships(results, frame_id)
+                ships = self._parse_to_ships(results, frame_id, frame_timestamp)
 
             except Exception as e:
                 print(f"[AsyncYOLO] 推理异常: {e}")
@@ -154,7 +159,12 @@ class AsyncYOLODetector:
                 frame_count = 0
                 last_time = now
 
-    def _parse_to_ships(self, results, frame_id: int) -> list:
+    def _parse_to_ships(
+        self,
+        results,
+        frame_id: int,
+        frame_timestamp: float,
+    ) -> list:
         result = results[0]
 
         if result.boxes is None or len(result.boxes) == 0:
@@ -192,6 +202,7 @@ class AsyncYOLODetector:
             ships.append(
                 {
                     "ship_id": len(ships),
+                    "class_id": cls_id,
                     "label": label,
                     "bbox": [x1, y1, x2, y2],
                     "center": [(x1 + x2) * 0.5, (y1 + y2) * 0.5],
@@ -202,6 +213,7 @@ class AsyncYOLODetector:
                     "threat_level": 0,
                     "hasSpeedBearing": False,
                     "source_frame_id": frame_id,
+                    "timestamp": float(frame_timestamp),
                 }
             )
 

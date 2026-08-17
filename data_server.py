@@ -117,7 +117,11 @@ def prepare_frame_data(width, height, curve, frame_id, timestamp,
                 "speed": float(s.get("speed", 0.0)),
                 "bearing": float(s.get("bearing", 0.0)),
                 "distance": float(s.get("distance", 0.0)),
+                "north_vel": float(s.get("north_vel", 0.0)),
+                "east_vel": float(s.get("east_vel", 0.0)),
+                "yaw": float(s.get("yaw", 0.0)),
                 "threat_level": int(s.get("threat_level", 0)),
+                "has_fusion_data": bool(s.get("has_fusion_data", False)),
 
                 "hasSpeedBearing": bool(
                     s.get("hasSpeedBearing", False)
@@ -388,7 +392,11 @@ class NavigationDataServer:
                 "speed": float(s.get("speed", 0.0)),
                 "bearing": float(s.get("bearing", 0.0)),
                 "distance": float(s.get("distance", 0.0)),
+                "north_vel": float(s.get("north_vel", 0.0)),
+                "east_vel": float(s.get("east_vel", 0.0)),
+                "yaw": float(s.get("yaw", 0.0)),
                 "threat_level": int(s.get("threat_level", 0)),
+                "has_fusion_data": bool(s.get("has_fusion_data", False)),
             }
 
             # 可选字段，godot如果有对应字段就能解析，没有也不影响
@@ -396,11 +404,6 @@ class NavigationDataServer:
                 ship_msg["hasSpeedBearing"] = bool(s.get("hasSpeedBearing"))
             if "bridge_pier_distance" in s:
                 ship_msg["bridge_pier_distance"] = float(s.get("bridge_pier_distance", -1.0))
-            if "north_vel" in s:
-                ship_msg["north_vel"] = float(s.get("north_vel", 0.0))
-            if "east_vel" in s:
-                ship_msg["east_vel"] = float(s.get("east_vel", 0.0))
-
             ships_json.append(ship_msg)
 
         json_obj = {

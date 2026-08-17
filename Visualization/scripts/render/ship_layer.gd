@@ -8,6 +8,12 @@ extends Control
 @export var box_thickness := 2.0
 @export var show_labels := true
 @export var font_size := 14
+@export var fusion_panel_color := Color(0.0, 0.45, 0.12, 0.72)
+@export var fusion_panel_border_color := Color(0.2, 1.0, 0.35, 0.95)
+@export var fusion_text_color := Color(0.92, 1.0, 0.94, 1.0)
+@export var fusion_panel_padding := 6.0
+@export var fusion_panel_gap := 6.0
+@export var fusion_panel_min_width := 160.0
 
 var _ships: Array = []
 var _coord_w := 1920
@@ -57,15 +63,64 @@ func _draw():
 		# 画框
 		draw_rect(rect, color, false, box_thickness)
 
-		# 标签
+		# 标签 / 融合信息
 		if show_labels:
-			var label_text = ship.get("label", "ship")
-			var conf = ship.get("conf", 0.0)
-			var display_text = "%s %.0f%%" % [label_text, conf * 100]
-
 			var font = ThemeDB.fallback_font
-			var text_pos = Vector2(x1, y1 - 4)
-			draw_string(font, text_pos, display_text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+			_draw_fusion_panel(font, ship, rect)
+
+func _draw_fusion_panel(font: Font, ship: Dictionary, ship_rect: Rect2):
+	var lines := PackedStringArray([
+		"north_vel: ",
+		"east_vel: ",
+		"distance: ",
+		"yaw: ",
+	])
+	if bool(ship.get("has_fusion_data", false)):
+		lines = PackedStringArray([
+			"north_vel: %.2f m/s" % float(ship.get("north_vel", 0.0)),
+			"east_vel: %.2f m/s" % float(ship.get("east_vel", 0.0)),
+			"distance: %.2f m" % float(ship.get("distance", 0.0)),
+			"yaw: %.2f" % float(ship.get("yaw", 0.0)),
+		])
+
+	var line_height := font.get_height(font_size)
+	var text_width := 0.0
+	for line in lines:
+		text_width = maxf(
+			text_width,
+			font.get_string_size(line, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x
+		)
+
+	var panel_size := Vector2(
+		maxf(fusion_panel_min_width, text_width + fusion_panel_padding * 2.0),
+		line_height * lines.size() + fusion_panel_padding * 2.0
+	)
+	var max_x := maxf(0.0, size.x - panel_size.x)
+	var panel_x := clampf(ship_rect.position.x, 0.0, max_x)
+	var panel_y := maxf(
+		0.0,
+		ship_rect.position.y - fusion_panel_gap - panel_size.y
+	)
+	var panel_rect := Rect2(Vector2(panel_x, panel_y), panel_size)
+
+	draw_rect(panel_rect, fusion_panel_color, true)
+	draw_rect(panel_rect, fusion_panel_border_color, false, 1.0)
+
+	var baseline_y := panel_y + fusion_panel_padding + font.get_ascent(font_size)
+	for index in range(lines.size()):
+		var text_pos := Vector2(
+			panel_x + fusion_panel_padding,
+			baseline_y + line_height * index
+		)
+		draw_string(
+			font,
+			text_pos,
+			lines[index],
+			HORIZONTAL_ALIGNMENT_LEFT,
+			-1,
+			font_size,
+			fusion_text_color
+		)
 
 func clear_ships():
 	_ships.clear()

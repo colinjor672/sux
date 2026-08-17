@@ -41,6 +41,7 @@ class FusionReceiver:
         self._lock = threading.Lock()
         self._ships: list = []
         self._last_update_time = 0.0
+        self._last_packet_timestamp = 0.0
 
         self._running = False
         self._connected = False
@@ -123,10 +124,15 @@ class FusionReceiver:
     def is_connected(self):
         return self._connected
 
+    def get_last_timestamp(self):
+        with self._lock:
+            return self._last_packet_timestamp
+
     def _clear_ships(self):
         with self._lock:
             self._ships = []
             self._last_update_time = 0.0
+            self._last_packet_timestamp = 0.0
 
     def _close_socket(self):
         sock = self._sock
@@ -336,6 +342,10 @@ class FusionReceiver:
                     payload.decode("utf-8")
                 )
 
+                packet_timestamp = float(packet["timestamp"])
+                if not math.isfinite(packet_timestamp):
+                    raise ValueError("invalid obstacle packet timestamp")
+
                 obstacles = packet.get("obstacles", [])
 
                 if not isinstance(obstacles, list):
@@ -345,11 +355,12 @@ class FusionReceiver:
                     )
                     continue
 
-                ships = self._convert(obstacles)
+                ships = self._convert(obstacles, packet_timestamp)
 
                 with self._lock:
                     self._ships = ships
                     self._last_update_time = time.time()
+                    self._last_packet_timestamp = packet_timestamp
 
             except UnicodeDecodeError as e:
                 print(f"[Fusion] UTF-8解析失败：{e}")
@@ -362,7 +373,7 @@ class FusionReceiver:
 
         return buf
 
-    def _convert(self, obstacles):
+    def _convert(self, obstacles, packet_timestamp=0.0):
         ships = []
 
         for obs in obstacles:
@@ -370,6 +381,16 @@ class FusionReceiver:
                 continue
 
             try:
+                length = float(obs["length"])
+                width = float(obs["width"])
+                height = float(obs["height"])
+                center_x = float(obs["center_x"])
+                center_y = float(obs["center_y"])
+                center_z = float(obs["center_z"])
+                yaw = float(obs["yaw"])
+                score = float(obs["score"])
+                obstacle_timestamp = float(obs["timestamp"])
+
                 x1 = int(obs.get("pixel_x1", -1))
                 y1 = int(obs.get("pixel_y1", -1))
                 x2 = int(obs.get("pixel_x2", -1))
@@ -430,7 +451,26 @@ class FusionReceiver:
                     obs.get("confidence", 0.0)
                 )
 
+                numeric_values = (
+                    length,
+                    width,
+                    height,
+                    center_x,
+                    center_y,
+                    center_z,
+                    yaw,
+                    distance,
+                    confidence,
+                    score,
+                    obstacle_timestamp,
+                    north_vel,
+                    east_vel,
+                )
+                if not all(math.isfinite(value) for value in numeric_values):
+                    continue
+
             except (
+                KeyError,
                 TypeError,
                 ValueError,
                 OverflowError,
@@ -452,6 +492,22 @@ class FusionReceiver:
             ships.append({
                 "ship_id": len(ships),
                 "label": f"Target-{class_id}",
+                "length": length,
+                "width": width,
+                "height": height,
+                "center_x": center_x,
+                "center_y": center_y,
+                "center_z": center_z,
+                "yaw": yaw,
+                "class_id": class_id,
+                "confidence": confidence,
+                "score": score,
+                "timestamp": obstacle_timestamp,
+                "packet_timestamp": float(packet_timestamp),
+                "pixel_x1": x1,
+                "pixel_y1": y1,
+                "pixel_x2": x2,
+                "pixel_y2": y2,
                 "bbox": [x1, y1, x2, y2],
                 "center": [
                     (x1 + x2) / 2.0,
@@ -460,7 +516,7 @@ class FusionReceiver:
                 "conf": confidence,
                 "speed": round(speed, 2),
                 "bearing": round(bearing, 1),
-                "distance": round(distance, 1),
+                "distance": distance,
                 "north_vel": north_vel,
                 "east_vel": east_vel,
                 "threat_level": threat_level,

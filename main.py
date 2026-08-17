@@ -57,22 +57,22 @@ def parse_args():
                    help="GNSS 导航带前视距离，米")
     p.add_argument("--nav-scale", type=float, default=0.5,
                    help="投映后导航带的等比缩放，(0,1]；1.0 为原尺寸")
-    p.add_argument("--nav-projection-hz", type=float, default=5.0,
+    p.add_argument("--nav-projection-hz", type=float, default=10.0,
                    help="GNSS projection updates per second; other frames reuse the cached curve")
-    p.add_argument("--gnss-history", default="gnss_history.xlsx",
-                   help="GNSS 历史轨迹 Excel/CSV")
-    p.add_argument("--gnss-prediction", default="gnss_csv.xlsx",
-                   help="GNSS 预测轨迹 Excel/CSV")
     p.add_argument("--calib-ini", default="calibration.ini",
                    help="相机-LiDAR 标定文件")
     p.add_argument("--lidar-height", type=float, default=1.6,
                    help="LiDAR 距水面高度，米")
-    p.add_argument("--prediction-start", type=float, default=None,
-                   help="预测轨迹开始生效的视频秒数；默认使用预测首条时间戳")
-    p.add_argument("--nav-time-offset", type=float, default=0.0,
-                   help="GNSS 时间相对视频时间的偏移，秒")
     p.add_argument("--nav-heading-offset", type=float, default=0.0,
                    help="航向安装修正角，度")
+    p.add_argument("--mqtt-host", default="127.0.0.1",
+                   help="本地 MQTT Broker 地址")
+    p.add_argument("--prediction-topic", default="v1/11/prediction/result",
+                   help="避障服务路径结果 MQTT Topic")
+    p.add_argument("--gnss-topic", default="v1/11/sensor/gnss/gnss_01",
+                   help="实时船只经纬度 MQTT Topic")
+    p.add_argument("--mqtt-username", default=os.environ.get("MQTT_USERNAME"))
+    p.add_argument("--mqtt-password", default=os.environ.get("MQTT_PASSWORD"))
 
     p.add_argument("--ship-host", default="127.0.0.1")
     p.add_argument("--ship-port", type=int, default=55103)
@@ -176,12 +176,18 @@ def main():
 
     if not 0.0 < args.nav_scale <= 1.0:
         raise ValueError("--nav-scale 必须在 (0, 1] 范围内")
+    if not math.isfinite(args.nav_draw_distance) or args.nav_draw_distance <= 0:
+        raise ValueError("--nav-draw-distance 必须大于 0")
     if not math.isfinite(args.nav_projection_hz) or args.nav_projection_hz <= 0:
         raise ValueError("--nav-projection-hz must be greater than 0")
     if not math.isfinite(args.playback_fps) or args.playback_fps < 0:
         raise ValueError("--playback-fps 必须是大于或等于 0 的有限数值")
     if args.cpu_threads < 1:
         raise ValueError("--cpu-threads 必须大于或等于 1")
+    if not args.mqtt_host.strip():
+        raise ValueError("--mqtt-host 不能为空")
+    if not args.prediction_topic.strip() or not args.gnss_topic.strip():
+        raise ValueError("MQTT Topic 不能为空")
 
     cv2.setNumThreads(args.cpu_threads)
     try:
@@ -246,13 +252,14 @@ def main():
             nav_draw_distance=args.nav_draw_distance,
             nav_scale=args.nav_scale,
             nav_projection_hz=args.nav_projection_hz,
-            gnss_history=args.gnss_history,
-            gnss_prediction=args.gnss_prediction,
             calib_ini=args.calib_ini,
             lidar_height=args.lidar_height,
-            prediction_start=args.prediction_start,
-            nav_time_offset=args.nav_time_offset,
             nav_heading_offset=args.nav_heading_offset,
+            mqtt_host=args.mqtt_host,
+            prediction_topic=args.prediction_topic,
+            gnss_topic=args.gnss_topic,
+            mqtt_username=args.mqtt_username,
+            mqtt_password=args.mqtt_password,
         )
     except Exception as e:
         import traceback

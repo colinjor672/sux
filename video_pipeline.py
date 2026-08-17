@@ -39,6 +39,7 @@ from network.shm_video_sender import ShmVideoSender
 from network.nav_sender import AsyncNavDataSender
 from network.yolo_sender import YoloSender
 from network.fusion_receiver import FusionReceiver
+from network.mqtt_navigation import MqttNavigationClient, MqttNavigationConfig
 import network.server as nav_server_module
 
 from utils.async_writer import AsyncVideoWriter
@@ -48,7 +49,8 @@ from utils.geometry import (
     merge_ship_data,
     should_draw_nav_band,
 )
-from utils.gnss_projection import GnssProjectionEngine
+from utils.gnss_projection import RealtimeGnssProjectionEngine
+from utils.realtime_navigation import RealtimeNavigationState
 from utils.frame_pacer import FramePacer
 
 from render.overlay import overlay_masks
@@ -72,14 +74,15 @@ def process_video(input_video, output_video,
                   mask_send_scale=0.5,
                   nav_draw_distance=30.0,
                   nav_scale=0.5,
-                  nav_projection_hz=5.0,
-                  gnss_history="gnss_history.xlsx",
-                  gnss_prediction="gnss_csv.xlsx",
+                  nav_projection_hz=10.0,
                   calib_ini="calibration.ini",
                   lidar_height=1.6,
-                  prediction_start=None,
-                  nav_time_offset=0.0,
-                  nav_heading_offset=0.0):
+                  nav_heading_offset=0.0,
+                  mqtt_host="127.0.0.1",
+                  prediction_topic="v1/11/prediction/result",
+                  gnss_topic="v1/11/sensor/gnss/gnss_01",
+                  mqtt_username=None,
+                  mqtt_password=None):
     # 各组件推理频率（硬编码，各自独立）
     DEPTV3_EVERY = 5   # DeepLabV3 分割：每5帧
     # YOLO 频率由 yolo_detector.py 的 detect_every=7 控制
@@ -118,7 +121,7 @@ def process_video(input_video, output_video,
     )
 
     #YOLO 异步检测器
-    SHIP_CLASS_IDS = [0]
+    SHIP_CLASS_IDS = [0, 1]
     SHIP_MODEL = YOLO(SHIP_ENGINE_PATH, task="detect")
 
     yolo_detector = AsyncYOLODetector(
@@ -134,8 +137,8 @@ def process_video(input_video, output_video,
 
     # YoloSender
     yolo_sender = None
-    if yolo_send_port > 0:
-        yolo_sender = YoloSender(host='0.0.0.0', port=yolo_send_port)
+    if yolo_send_port > 0 and ship_host and ship_host.strip():
+        yolo_sender = YoloSender(host=ship_host, port=yolo_send_port)
         yolo_sender.start()
         print(f"[YoloSender] YOLO结果发送端口: {yolo_send_port}")
 
@@ -234,20 +237,36 @@ def process_video(input_video, output_video,
     send_w     = max(1, int(width  * send_scale))
     send_h     = max(1, int(height * send_scale))
 
-    gnss_projector = GnssProjectionEngine(
-        history_path=gnss_history,
-        prediction_path=gnss_prediction,
+    navigation_state = RealtimeNavigationState(
+        lookahead_m=nav_draw_distance,
+        sample_spacing_m=0.25,
+        speed_window_points=15,
+        speed_update_hz=10.0,
+        moving_threshold_mps=1.0,
+        timestamp_tolerance_s=1.0,
+        heading_offset_deg=nav_heading_offset,
+    )
+    gnss_projector = RealtimeGnssProjectionEngine(
+        navigation_state=navigation_state,
         calibration_path=calib_ini,
         width=width,
         height=height,
         lidar_height_m=lidar_height,
-        lookahead_m=nav_draw_distance,
-        sample_spacing_m=0.25,
         projection_scale=nav_scale,
         update_hz=nav_projection_hz,
-        prediction_start_s=prediction_start,
-        heading_offset_deg=nav_heading_offset,
-        time_offset_s=nav_time_offset,
+    )
+    mqtt_config = MqttNavigationConfig(
+        host=mqtt_host,
+        prediction_topic=prediction_topic,
+        gnss_topic=gnss_topic,
+        username=mqtt_username,
+        password=mqtt_password,
+    )
+    mqtt_navigation = MqttNavigationClient(
+        navigation_state,
+        mqtt_config,
+        clock=time.time,
+        monotonic_clock=time.monotonic,
     )
 
     # 异步分割推理器（在 GPU 上完成 mask resize，避免下游 cuda_resize 往返）
@@ -274,11 +293,20 @@ def process_video(input_video, output_video,
     frame_times = []
     last_processed_seg_fid = -1
     last_sent_nav_seg_fid = -1
+    last_sent_yolo_frame_id = -1
 
     print(f"视频: {width}×{height} @ {fps:.1f}fps, 共 {total_frames} 帧")
     print(f"[AsyncSeg] ✓ 推理完全异步 | 主循环零等待")
     print(f"开始处理...\n")
     t_start = time.time()
+
+    navigation_state.start()
+    try:
+        mqtt_navigation.start()
+    except Exception:
+        mqtt_navigation.stop()
+        navigation_state.stop()
+        raise
 
     try:
         _loop_started = False
@@ -289,6 +317,7 @@ def process_video(input_video, output_video,
             if frame_pacer is not None:
                 frame_pacer.wait()
             ret, result = cap.read()
+            frame_timestamp = time.time()
             if not ret:
                 print(f"[Pipeline] cap.read() 返回 False，主循环退出 (frame_idx={frame_idx})", flush=True)
                 break
@@ -319,7 +348,7 @@ def process_video(input_video, output_video,
 
             # GNSS 地面点经相机标定投映到完整视频坐标。
             # 下游 TCP 协议和 Godot 渲染器仍只接收原有二维 curve。
-            gnss_curve = gnss_projector.project(video_time)
+            gnss_curve = gnss_projector.project()
             if len(gnss_curve) > 0:
                 gnss_curve_send = scale_curve_xy(
                     gnss_curve,
@@ -337,7 +366,7 @@ def process_video(input_video, output_video,
             if frame_idx % DEPTV3_EVERY == 0:
                 async_seg.submit(frame, frame_idx)
 
-            yolo_detector.submit(frame, frame_idx)
+            yolo_detector.submit(frame, frame_idx, frame_timestamp)
 
             # ★ 步骤 2：取最新分割结果（非阻塞，有新的就更新缓存）
             seg_result = async_seg.get_result()
@@ -374,15 +403,29 @@ def process_video(input_video, output_video,
                             interpolation=cv2.INTER_NEAREST,
                         )
 
-            # ★ 步骤 3：船只数据汇总
-            yolo_ships     = yolo_detector.get_result()
+            # ★ 步骤 3：船只数据汇总（桥墩 class 1 仅发送，不参与显示/融合）
+            yolo_detections = yolo_detector.get_result()
+            yolo_ships = [
+                target
+                for target in yolo_detections
+                if int(target.get("class_id", 0)) == 0
+            ]
             external_ships = fusion_receiver.get_ships() if fusion_receiver else []
             ships_final    = merge_ship_data(yolo_ships, external_ships)
             
 
             # ★ 步骤 4：YoloSender 推送
-            if yolo_sender and yolo_ships:
-                yolo_sender.send_ships(yolo_ships, frame_idx, width, height)
+            if yolo_sender and yolo_detections:
+                yolo_frame_id = int(yolo_detections[0]["source_frame_id"])
+                if yolo_frame_id != last_sent_yolo_frame_id:
+                    yolo_sender.send_ships(
+                        yolo_detections,
+                        yolo_frame_id,
+                        width,
+                        height,
+                        timestamp=float(yolo_detections[0]["timestamp"]),
+                    )
+                    last_sent_yolo_frame_id = yolo_frame_id
 
             # 步骤 5：TCP 导航数据发送
             # 只在新的分割帧出现后发送一次，避免重复提取同一张 mask 的 polygon
@@ -531,6 +574,8 @@ def process_video(input_video, output_video,
             shm_video_sender.stop()
         if nav_sender:
             nav_sender.shutdown()
+        mqtt_navigation.stop()
+        navigation_state.stop()
         if yolo_detector:
             yolo_detector.shutdown()
         if yolo_sender:

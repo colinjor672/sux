@@ -1,3 +1,5 @@
+import math
+
 import cv2
 import numpy as np
 
@@ -139,42 +141,121 @@ def should_draw_nav_band(ships, external_ships, max_distance):
     return min(distances) <= max_distance
 
 
-def merge_ship_data(yolo_ships, external_ships):
+def _ship_center(ship):
+    if not isinstance(ship, dict):
+        return None
+
+    try:
+        center = ship.get("center")
+        if center is not None and len(center) >= 2:
+            x, y = float(center[0]), float(center[1])
+        else:
+            bbox = ship.get("bbox")
+            if bbox is None or len(bbox) < 4:
+                return None
+            x = (float(bbox[0]) + float(bbox[2])) * 0.5
+            y = (float(bbox[1]) + float(bbox[3])) * 0.5
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+    if not math.isfinite(x) or not math.isfinite(y):
+        return None
+    return x, y
+
+
+def _fusion_values(ship):
+    if not isinstance(ship, dict):
+        return None
+
+    try:
+        values = {
+            key: float(ship[key])
+            for key in ("north_vel", "east_vel", "distance", "yaw")
+        }
+    except (KeyError, TypeError, ValueError, OverflowError):
+        return None
+
+    if not all(math.isfinite(value) for value in values.values()):
+        return None
+    return values
+
+
+def _optional_float(ship, key, default):
+    try:
+        value = float(ship.get(key, default))
+    except (TypeError, ValueError, OverflowError):
+        return float(default)
+    return value if math.isfinite(value) else float(default)
+
+
+def merge_ship_data(yolo_ships, external_ships, max_match_distance=80.0):
     if not yolo_ships:
         return []
 
-    if not external_ships:
+    # YOLO results can be reused between video frames. Clear fusion fields first
+    # so expired or unmatched external data is never displayed as current data.
+    for ship in yolo_ships:
+        ship["speed"] = 0.0
+        ship["bearing"] = 0.0
+        ship["distance"] = 0.0
+        ship["north_vel"] = 0.0
+        ship["east_vel"] = 0.0
+        ship["yaw"] = 0.0
+        ship["bridge_pier_distance"] = -1.0
+        ship["hasSpeedBearing"] = False
+        ship["has_fusion_data"] = False
+
+    if not external_ships or not isinstance(external_ships, (list, tuple)):
         return yolo_ships
 
-    for ys in yolo_ships:
-        cx, cy = ys["center"]
-        best_ext = None
-        best_d = 1e9
+    try:
+        match_limit = float(max_match_distance)
+    except (TypeError, ValueError, OverflowError):
+        return yolo_ships
+    if not math.isfinite(match_limit) or match_limit < 0.0:
+        return yolo_ships
 
-        for ext in external_ships:
-            if "center" in ext:
-                ex, ey = ext["center"]
-            elif "bbox" in ext:
-                bx1, by1, bx2, by2 = ext["bbox"]
-                ex, ey = (bx1 + bx2) / 2, (by1 + by2) / 2
-            else:
-                continue
+    valid_external = []
+    for external_ship in external_ships:
+        center = _ship_center(external_ship)
+        values = _fusion_values(external_ship)
+        if center is not None and values is not None:
+            valid_external.append((external_ship, center, values))
 
-            d = ((cx - ex) ** 2 + (cy - ey) ** 2) ** 0.5
+    candidates = []
+    for yolo_index, yolo_ship in enumerate(yolo_ships):
+        center = _ship_center(yolo_ship)
+        if center is None:
+            continue
+        cx, cy = center
 
-            if d < best_d:
-                best_d = d
-                best_ext = ext
+        for external_index, (_, external_center, _) in enumerate(valid_external):
+            ex, ey = external_center
+            distance = math.hypot(cx - ex, cy - ey)
+            if distance <= match_limit:
+                candidates.append((distance, yolo_index, external_index))
 
-        if best_ext is not None and best_d < 80:
-            ys["speed"] = float(best_ext.get("speed", 0.0))
-            ys["bearing"] = float(best_ext.get("bearing", 0.0))
-            ys["distance"] = float(best_ext.get("distance", 0.0))
-            ys["bridge_pier_distance"] = float(
-                best_ext.get("bridge_pier_distance", -1.0)
-            )
-            ys["hasSpeedBearing"] = True
-        else:
-            ys["hasSpeedBearing"] = False
+    matched_yolo = set()
+    matched_external = set()
+
+    # Assign the globally closest available pair first to enforce one-to-one
+    # matching when several delayed fusion boxes are near the same YOLO box.
+    for _, yolo_index, external_index in sorted(candidates):
+        if yolo_index in matched_yolo or external_index in matched_external:
+            continue
+
+        yolo_ship = yolo_ships[yolo_index]
+        external_ship, _, fusion_values = valid_external[external_index]
+        yolo_ship["speed"] = _optional_float(external_ship, "speed", 0.0)
+        yolo_ship["bearing"] = _optional_float(external_ship, "bearing", 0.0)
+        yolo_ship.update(fusion_values)
+        yolo_ship["bridge_pier_distance"] = _optional_float(
+            external_ship, "bridge_pier_distance", -1.0
+        )
+        yolo_ship["hasSpeedBearing"] = True
+        yolo_ship["has_fusion_data"] = True
+
+        matched_yolo.add(yolo_index)
+        matched_external.add(external_index)
 
     return yolo_ships
